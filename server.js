@@ -395,7 +395,11 @@ app.get("/", (req, res) => {
 // ---------- Auth APIs ----------
 app.get("/api/me", (req, res) => {
   if (!req.session?.userId) return res.json({ loggedIn: false });
-  res.json({ loggedIn: true, id: req.session.userId, username: req.session.username });
+  res.json({
+    loggedIn: true,
+    userId: req.session.userId,
+    username: req.session.username,
+  });
 });
 
 app.post("/api/register", wrap(async (req, res) => {
@@ -413,11 +417,14 @@ app.post("/api/register", wrap(async (req, res) => {
       "INSERT INTO users (username, password_hash) VALUES (?, ?)",
       [username, hash]
     );
+
     req.session.userId = result.insertId;
     req.session.username = username;
-    res.json({ id: result.insertId, username });
+
+    return res.json({ userId: result.insertId, username });
   } catch (e) {
-    res.status(400).json({ message: "username already used" });
+    // username UNIQUE 想定
+    return res.status(400).json({ message: "username already used" });
   }
 }));
 
@@ -436,7 +443,7 @@ app.post("/api/login", wrap(async (req, res) => {
 
   req.session.userId = rows[0].id;
   req.session.username = username;
-  res.json({ id: rows[0].id, username });
+  res.json({ userId: rows[0].id, username });
 }));
 
 app.post("/api/logout", (req, res) => {
