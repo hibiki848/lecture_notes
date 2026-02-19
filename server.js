@@ -51,7 +51,6 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
-const express = require("express");
 const app = express();
 
 app.get("/health", (req, res) => {
