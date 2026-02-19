@@ -20,14 +20,6 @@
  * OPENAI_API_KEY=sk-...
  */
 
-app.get("/health", (req, res) => {
-  res.status(200).send("ok");
-});
-
-app.get("/", (req, res) => {
-  res.status(200).send("ok");
-});
-
 process.on("uncaughtException", (err) => {
   console.error("UNCAUGHT_EXCEPTION:", err);
 });
@@ -59,7 +51,16 @@ function getOpenAIClient() {
   return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 }
 
+const express = require("express");
 const app = express();
+
+app.get("/health", (req, res) => {
+  res.status(200).send("ok");
+});
+
+app.get("/", (req, res) => {
+  res.status(200).send("ok");
+});
 
 // ---------- Middlewares ----------
 app.use(express.json({ limit: "1mb" }));
