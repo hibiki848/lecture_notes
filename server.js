@@ -19,6 +19,17 @@
  * SESSION_SECRET=...
  * OPENAI_API_KEY=sk-...
  */
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT_EXCEPTION:", err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("UNHANDLED_REJECTION:", reason);
+});
+
+
+console.log("BOOT: server.js loaded");
+console.log("BOOT: NODE_ENV=", process.env.NODE_ENV);
+console.log("BOOT: PORT=", process.env.PORT);
 
 if (process.env.NODE_ENV !== "production") {
   require("dotenv").config();
@@ -883,6 +894,7 @@ app.use((err, req, res, next) => {
 
 // ---------- Listen ----------
 const PORT = Number(process.env.PORT || 3000);
+console.log("BOOT: about to listen...");
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${PORT}`);
 });
