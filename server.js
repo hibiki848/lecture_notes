@@ -186,7 +186,7 @@ function buildMarkdown({ course_name, lecture_no, lecture_date, title, body_raw 
   const main = [];
 
   for (const l of lines) {
-    if (l.includes("⭐️") || l.toLowerCase().startsWith("important:")) important.push(l);
+    if (l.includes("★") || l.toLowerCase().startsWith("important:")) important.push(l);
     if (l.includes("？") || l.endsWith("?") || l.endsWith("？")) questions.push(l);
     if (l.startsWith("用語:")) terms.push(l.replace(/^用語:\s*/, ""));
     if (l.toUpperCase().startsWith("TODO:")) todos.push(l.replace(/^TODO:\s*/i, ""));
@@ -311,8 +311,8 @@ function generateQuizzesFromBodyRaw(body_raw) {
       continue;
     }
 
-    if (line.includes("⭐️") || line.toLowerCase().startsWith("important:")) {
-      const cleaned = line.replace("⭐️", "").replace(/^important:\s*/i, "").trim();
+    if (line.includes("★") || line.toLowerCase().startsWith("important:")) {
+      const cleaned = line.replace("★", "").replace(/^important:\s*/i, "").trim();
       if (cleaned) {
         pushUnique({
           type: "tf",
