@@ -261,11 +261,11 @@ async function loadCommunitiesOnMyPage(){
     for (const c of list){
       const li = document.createElement("li");
 
-      const isAdmin = c.role === "admin";
+      const isAdmin = c.role === "管理者";
       li.innerHTML = `
         ID: <b>${c.id}</b> / ${escapeHtml(c.name || "")}
         <span style="display:inline-block; padding:2px 8px; border-radius:999px; background:#eee; font-size:12px; margin-left:6px;">
-          ${escapeHtml(c.role || "member")}
+          ${escapeHtml(c.role || "メンバー")}
         </span>
         ${isAdmin ? `<button data-delete-comm="${c.id}" style="margin-left:8px;">削除（解散）</button>` : ""}
       `;
