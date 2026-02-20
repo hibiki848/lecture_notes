@@ -1407,3 +1407,25 @@ app.delete("/api/communities/:id", requireLogin, wrap(async (req, res) => {
   }
 }));
 
+// コミュニティ検索（ログイン必須にするなら requireLogin を付ける）
+app.get("/api/communities", wrap(async (req, res) => {
+  const q = String(req.query.q || "").trim();
+
+  // 空なら最新/人気順で返す、みたいな挙動も可能（今回は空なら空配列）
+  if (!q) return res.json({ communities: [] });
+
+  // LIKE検索（部分一致）
+  // 重要：プレースホルダでSQLインジェクション対策
+  const like = `%${q}%`;
+
+  const rows = await query(
+    `SELECT id, name, description
+       FROM communities
+      WHERE name LIKE ?
+      ORDER BY name ASC
+      LIMIT 50`,
+    [like]
+  );
+
+  res.json({ communities: rows });
+}));

@@ -222,3 +222,42 @@ $("university_name")?.addEventListener("input", syncUniversityToSearch);
 $("university_name")?.addEventListener("change", refreshList);
 
 if ($("list")) $("list").textContent = "コミュニティ名を入れて検索してください。";
+
+async function searchCommunities() {
+  const q = $("communitySearchQ").value.trim();
+  const box = $("communitySearchResult");
+
+  if (!q) {
+    box.innerHTML = `<div class="muted">検索ワードを入力してね</div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="muted">検索中...</div>`;
+
+  try {
+    const data = await api(`/api/communities?q=${encodeURIComponent(q)}`);
+    const list = data.communities || [];
+
+    if (!list.length) {
+      box.innerHTML = `<div class="muted">見つかりませんでした</div>`;
+      return;
+    }
+
+    box.innerHTML = list.map(c => `
+      <div class="item">
+        <div class="title">${escapeHtml(c.name)}</div>
+        <div class="muted">${escapeHtml(c.description || "")}</div>
+        <div style="margin-top:6px;">
+          <a href="/community.html?id=${c.id}">開く</a>
+        </div>
+      </div>
+    `).join("");
+  } catch (e) {
+    box.innerHTML = `<div class="error">${escapeHtml(e.message || "検索に失敗")}</div>`;
+  }
+}
+
+$("communitySearchBtn").addEventListener("click", searchCommunities);
+$("communitySearchQ").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") searchCommunities();
+});
