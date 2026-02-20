@@ -1643,3 +1643,30 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.key === "Enter") searchCommunities();
   });
 });
+
+// コミュニティ退会（自分の所属を削除）
+app.post("/api/communities/:id/leave", requireLogin, wrap(async (req, res) => {
+  const communityId = Number(req.params.id);
+  const userId = req.session.userId;
+
+  if (!communityId) return res.status(400).json({ message: "invalid community id" });
+
+  // まず所属してるか
+  const [rows] = await pool.query(
+    `SELECT role FROM user_communities
+      WHERE user_id = ? AND community_id = ?
+      LIMIT 1`,
+    [userId, communityId]
+  );
+  if (!rows.length) return res.status(400).json({ message: "not a member" });
+
+  // 退会
+  await pool.query(
+    `DELETE FROM user_communities
+      WHERE user_id = ? AND community_id = ?
+      LIMIT 1`,
+    [userId, communityId]
+  );
+
+  res.json({ ok: true });
+}));

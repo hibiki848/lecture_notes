@@ -260,6 +260,8 @@ async function loadCommunitiesOnMyPage(){
           ${roleLabel}
         </span>
         ${isAdmin ? `<button data-delete-comm="${c.id}" style="margin-left:8px;">削除（解散）</button>` : ""}
+        <button data-leave-comm="${c.id}" style="margin-left:8px;">退会</button>
+
       `;
 
       ul.appendChild(li);
@@ -295,6 +297,29 @@ async function loadCommunitiesOnMyPage(){
     ul.innerHTML = `<li>取得失敗: ${escapeHtml(e.message)}</li>`;
   }
 }
+
+// 退会ボタンのイベント
+ul.querySelectorAll('button[data-leave-comm]').forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const id = Number(btn.getAttribute("data-leave-comm"));
+    if (!id) return;
+
+    const ok = confirm(`コミュニティ(ID:${id})を退会しますか？\n※コミュ内ノートが見られなくなります`);
+    if (!ok) return;
+
+    try {
+      btn.disabled = true;
+      btn.textContent = "退会中…";
+      await api(`/api/communities/${id}/leave`, { method: "POST" });
+      alert("退会しました");
+      await loadCommunitiesOnMyPage();
+    } catch (e) {
+      alert("退会失敗: " + e.message);
+      btn.disabled = false;
+      btn.textContent = "退会";
+    }
+  });
+});
 
 // 更新ボタン
 if ($("btnReloadCommunities")){
