@@ -116,7 +116,6 @@ async function refreshList() {
       <div>${escapeHtml(n.course_name)} / ${escapeHtml(n.lecture_no)} / ${n.lecture_date}${author}</div>
       <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap;">
         <a href="${detailUrl}">詳細を開く</a>
-        <a href="/how-to.html">使い方</a>
       </div>
     `;
     el.appendChild(div);
