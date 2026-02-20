@@ -515,19 +515,6 @@ app.post("/api/logout", (req, res) => {
 // ---------- Communities APIs (B方式) ----------
 // ...（ここ以降は今のコードをそのまま貼る）...
 
-// ---------- Error Handler ----------
-app.use((err, req, res, next) => {
-  console.error(err);
-  const isApi = String(req.path || "").startsWith("/api/");
-  if (isApi) {
-    return res.status(500).json({
-      message: "server error",
-      detail: err?.message || String(err),
-    });
-  }
-  res.status(500).send("Server Error");
-});
-
 // 参加申請一覧（pending）: そのコミュの member/admin が見れる
 app.get("/api/communities/:id/join-requests", requireLogin, wrap(async (req, res) => {
   const communityId = Number(req.params.id);
@@ -681,18 +668,6 @@ app.post("/api/communities/join", requireLogin, wrap(async (req, res) => {
   res.json({ ok: true, id: c.id, name: c.name });
 }));
 
-// 自分の参加コミュ一覧
-app.get("/api/communities/mine", requireLogin, wrap(async (req, res) => {
-  const [rows] = await pool.query(
-    `SELECT c.id, c.name, uc.role, uc.joined_at
-       FROM user_communities uc
-       JOIN communities c ON c.id = uc.community_id
-      WHERE uc.user_id = ?
-      ORDER BY uc.joined_at DESC`,
-    [req.session.userId]
-  );
-  res.json(rows);
-}));
 
 // コミュ削除（解散）: 管理者のみ
 app.delete("/api/communities/:id", requireLogin, wrap(async (req, res) => {
@@ -1477,27 +1452,6 @@ app.delete("/api/account", requireLogin, wrap(async (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 }));
 
-// ---------- Error Handler ----------
-app.use((err, req, res, next) => {
-  console.error(err);
-
-  const isApi = String(req.path || "").startsWith("/api/");
-  if (isApi) {
-    return res.status(500).json({
-      message: "server error",
-      detail: err?.message || String(err),
-    });
-  }
-  res.status(500).send("Server Error");
-});
-
-// ---------- Listen ----------
-const PORT = Number(process.env.PORT || 3000);
-console.log("BOOT: about to listen...");
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Server running on port ${PORT}`);
-});
-
 async function isCommunityAdmin(userId, communityId) {
   const [rows] = await pool.query(
     `SELECT 1
@@ -1593,79 +1547,6 @@ app.post("/api/communities/:id/join-requests", requireLogin, wrap(async (req, re
   }
 }));
 
-// ===== 非公開コミュニティ検索（参加申請つき）=====
-async function searchCommunities() {
-  const qEl = document.getElementById("communitySearchQ");
-  const box = document.getElementById("communitySearchResult");
-  if (!qEl || !box) return;
-
-  const q = qEl.value.trim();
-  if (!q) {
-    box.innerHTML = `<div class="muted">検索ワードを入力してね</div>`;
-    return;
-  }
-
-  box.innerHTML = `<div class="muted">検索中...</div>`;
-
-  try {
-    const data = await api(`/api/communities?q=${encodeURIComponent(q)}`);
-    const list = data.communities || [];
-
-    if (!list.length) {
-      box.innerHTML = `<div class="muted">見つかりませんでした</div>`;
-      return;
-    }
-
-    box.innerHTML = list.map(c => {
-      // is_member/has_pending が返ってこなくてもボタンが出るようにする
-      const member = Number(c.is_member || 0) === 1;
-      const pending = Number(c.has_pending || 0) === 1;
-
-      let right = "";
-      if (member) right = `<span class="muted">参加済み</span>`;
-      else if (pending) right = `<span class="muted">申請済み</span>`;
-      else right = `<button data-req="${c.id}">参加申請</button>`;
-
-      return `
-        <div class="item" style="display:flex; justify-content:space-between; gap:10px; align-items:center;">
-          <div class="title">${escapeHtml(c.name)}</div>
-          <div>${right}</div>
-        </div>
-      `;
-    }).join("");
-
-    // 申請ボタン
-    box.querySelectorAll("button[data-req]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const communityId = Number(btn.dataset.req);
-        const message = prompt("参加申請メッセージ（任意）") || "";
-        btn.disabled = true;
-
-        try {
-          await api(`/api/communities/${communityId}/join-requests`, {
-            method: "POST",
-            body: JSON.stringify({ message }),
-          });
-          btn.outerHTML = `<span class="muted">申請済み</span>`;
-        } catch (e) {
-          alert(e.message || "申請に失敗しました");
-          btn.disabled = false;
-        }
-      });
-    });
-
-  } catch (e) {
-    box.innerHTML = `<div class="error">${escapeHtml(e.message || "検索に失敗")}</div>`;
-  }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("communitySearchBtn")?.addEventListener("click", searchCommunities);
-  document.getElementById("communitySearchQ")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") searchCommunities();
-  });
-});
-
 // コミュニティ退会（自分の所属を削除）
 app.post("/api/communities/:id/leave", requireLogin, wrap(async (req, res) => {
   const communityId = Number(req.params.id);
@@ -1692,3 +1573,24 @@ app.post("/api/communities/:id/leave", requireLogin, wrap(async (req, res) => {
 
   res.json({ ok: true });
 }));
+
+// ---------- Error Handler ----------
+app.use((err, req, res, next) => {
+  console.error(err);
+
+  const isApi = String(req.path || "").startsWith("/api/");
+  if (isApi) {
+    return res.status(500).json({
+      message: "server error",
+      detail: err?.message || String(err),
+    });
+  }
+  res.status(500).send("Server Error");
+});
+
+// ---------- Listen ----------
+const PORT = Number(process.env.PORT || 3000);
+console.log("BOOT: about to listen...");
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server running on port ${PORT}`);
+});
