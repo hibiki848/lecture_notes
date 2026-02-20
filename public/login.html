@@ -148,7 +148,13 @@
 
       for (const c of list){
         const li = document.createElement("li");
-        const roleTag = c.role ? `<span class="tag">${c.role}</span>` : "";
+        const roleLabel =
+          c.role === "admin" ? "管理者" :
+          c.role === "member" ? "メンバー" :
+          (c.role || "");
+
+        const roleTag = roleLabel ? `<span class="tag">${roleLabel}</span>` : "";
+
         li.innerHTML = `ID: <b>${c.id}</b> / ${escapeHtml(c.name || "")} ${roleTag}`;
         ul.appendChild(li);
       }
