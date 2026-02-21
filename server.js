@@ -267,76 +267,6 @@ function canEditNote(req, note) {
   return { ok: true };
 }
 
-function generateQuizzesFromBodyRaw(body_raw) {
-  const lines = String(body_raw || "")
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-
-  const out = [];
-  const seen = new Set();
-
-  const pushUnique = (q) => {
-    const key = `${q.type}::${q.question}`.slice(0, 300);
-    if (seen.has(key)) return;
-    seen.add(key);
-    out.push(q);
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("用語:")) {
-      const content = line.replace(/^用語:\s*/, "").trim();
-      const m = content.match(/^(.+?)\s*(=|＝|:|：)\s*(.+)$/);
-      if (m) {
-        const term = m[1].trim();
-        const def = m[3].trim();
-        if (term && def) {
-          pushUnique({ type: "term", question: `「${term}」とは？`, answer: def, source_line: line });
-        }
-      } else if (content) {
-        pushUnique({
-          type: "term",
-          question: `「${content}」とは？`,
-          answer: "（本文を見て答えを追記）",
-          source_line: line,
-        });
-      }
-      continue;
-    }
-
-    if (line.startsWith("？") || line.startsWith("?") || line.endsWith("?") || line.endsWith("？")) {
-      const q = line.replace(/^[？?]\s*/, "").trim();
-      if (q) pushUnique({ type: "question", question: q, answer: "", source_line: line });
-      continue;
-    }
-
-    if (line.includes("★") || line.toLowerCase().startsWith("important:")) {
-      const cleaned = line.replace("★", "").replace(/^important:\s*/i, "").trim();
-      if (cleaned) {
-        pushUnique({
-          type: "tf",
-          question: `【○×】${cleaned}（正しい/誤り？）`,
-          answer: "正しい",
-          source_line: line,
-        });
-      }
-      continue;
-    }
-
-    const m2 = line.match(/^(.+?)\s*(=|＝|:|：)\s*(.+)$/);
-    if (m2) {
-      const left = m2[1].trim();
-      const right = m2[3].trim();
-      if (left && right && left.length <= 30) {
-        pushUnique({ type: "term", question: `「${left}」とは？`, answer: right, source_line: line });
-      }
-    }
-  }
-
-  return out.slice(0, 30);
-}
-
 async function generateQuizzesWithAI({ title, course_name, body_raw }) {
   const openai = getOpenAIClient();
   const body = String(body_raw || "").slice(0, 8000);
@@ -959,6 +889,22 @@ function generateQuizzesFromBodyRaw(bodyRaw, options = {}) {
   // 正誤問題を適度に混ぜる（偏り防止）
   let picked = pickWithVariety(candidates, opts.limit, opts.allowTrueFalse);
 
+    // 0問だったら保険で1問作る（空ノート/短文でも落とさない）
+  if (!picked.length) {
+    const fallbackUnit = units.find(u => (u.text || "").trim().length >= 25) || units[0];
+    if (fallbackUnit?.text) {
+      const t = fallbackUnit.text.replace(/[。！？]$/, "");
+      const mid = Math.floor(t.length * 0.45);
+      picked = [{
+        type: "fill",
+        question: withHeading(fallbackUnit.heading, t.slice(0, mid) + "（　　　）"),
+        answer: t.slice(mid),
+        source_line: fallbackUnit.lineNo,
+        meta: { kind: "fallback" },
+      }];
+    }
+  }
+
   // DBに入れる形に整形
   return picked.map(c => ({
     type: c.type || "short",
@@ -969,7 +915,7 @@ function generateQuizzesFromBodyRaw(bodyRaw, options = {}) {
 }
 
 // ---- 前処理: 行をきれいにする ----
-function normalizeLines(lines) {
+}function normalizeLines(lines) {
   const out = [];
   let inCode = false;
 
@@ -987,27 +933,17 @@ function normalizeLines(lines) {
     s = s.replace(/\u200B/g, "").replace(/\t/g, " ");
 
     // URLはノイズになりがち
-    s = s.replace(/https?:\/\/\S+/g, "").trimEnd();
+    s = s.replace(/https?:\/\/\S+/g, "");
+
+    // 行末だけ整える（空行判定は後段の toUnits で）
+    s = s.trimEnd();
 
     out.push({ raw: s, lineNo: i + 1 });
-  } 
-    　  // 7) 保険：何も取れなかった時に最低1問だけ作る（0件回避）
-    if (out.length === 0) {
-      const t = text.replace(/[。！？]$/, "");
-      if (t.length >= 25 && t.length <= 120) {
-        const mid = Math.floor(t.length * 0.45);
-        out.push(makeCandidate({
-          type: "fill",
-          question: withHeading(heading, t.slice(0, mid) + "（　　　）"),
-          answer: t.slice(mid),
-          source_line,
-          meta: { kind: "fallback" },
-        }));
-      }
   }
 
   return out;
 }
+
 
 // ---- ユニット化: 見出し/箇条書きを扱いやすくする ----
 function toUnits(normLines) {
@@ -1230,6 +1166,60 @@ function extractFromUnit(u) {
             meta: { kind: "tf" },
           }));
         }
+      }
+    }
+  }
+    // 7) 「A（B）」みたいな補足を穴埋めにする（講義ノートで多い）
+  {
+    const m = text.match(/^(.{4,80}?)（(.{2,40}?)）(.{0,60})$/);
+    if (m) {
+      const left = trimJP(m[1] + (m[3] || ""));
+      const inside = trimJP(m[2]);
+      if (left && inside && inside.length <= 30) {
+        out.push(makeCandidate({
+          type: "fill",
+          question: withHeading(heading, left.replace(inside, "（　　　）")),
+          answer: inside,
+          source_line,
+          meta: { kind: "paren_blank" },
+        }));
+      }
+    }
+  }
+
+  // 8) 「英語: 日本語」や「A - B」も用語として拾う
+  {
+    const m = text.match(/^(.{2,40}?)\s*(?:-|—|–|:|：)\s*(.{2,80})$/);
+    if (m) {
+      const left = trimJP(m[1]);
+      const right = trimJP(m[2]);
+      if (left && right && left.length <= 30 && right.length <= 80) {
+        out.push(makeCandidate({
+          type: "term",
+          question: withHeading(heading, `「${left}」とは？`),
+          answer: right.replace(/[。！？]$/, ""),
+          source_line,
+          meta: { kind: "pair" },
+        }));
+      }
+    }
+  }
+
+  // 9) 数値が入る文は「穴埋め」にすると強い（例: 100ms, 3層, 2種類）
+  {
+    const m = text.match(/(.{6,120}?)([0-9０-９]+(?:\.[0-9]+)?)(\s*(?:ms|s|秒|分|時間|日|年|%|％|個|件|回|層|種類|章|GB|MB|kB|Hz|kHz|MHz|GHz)?)(.{0,60})$/);
+    if (m) {
+      const num = m[2];
+      const unit = (m[3] || "").trim();
+      const qText = trimJP((m[1] + "（　　　）" + (m[4] || "")).replace(/[。！？]$/, ""));
+      if (qText.length >= 15 && qText.length <= 140) {
+        out.push(makeCandidate({
+          type: "fill",
+          question: withHeading(heading, qText),
+          answer: `${num}${unit}`.trim(),
+          source_line,
+          meta: { kind: "num_blank" },
+        }));
       }
     }
   }
