@@ -915,7 +915,7 @@ function generateQuizzesFromBodyRaw(bodyRaw, options = {}) {
 }
 
 // ---- 前処理: 行をきれいにする ----
-}function normalizeLines(lines) {
+function normalizeLines(lines) {
   const out = [];
   let inCode = false;
 
