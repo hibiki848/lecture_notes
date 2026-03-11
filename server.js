@@ -2331,12 +2331,16 @@ app.put("/api/quizzes/:id", requireLogin, wrap(async (req, res) => {
 
 app.delete("/api/quizzes/:id", requireLogin, wrap(async (req, res) => {
   const id = Number(req.params.id);
+  let hasForeignUserQuiz = false;
 
   const [rows] = await pool.query("SELECT user_id FROM user_quizzes WHERE id = ? LIMIT 1", [id]);
   if (rows.length) {
-    if (rows[0].user_id !== req.session.userId) return res.status(403).json({ message: "forbidden" });
-    await pool.query("DELETE FROM user_quizzes WHERE id = ?", [id]);
-    return res.json({ ok: true, deleted: "user_quiz" });
+    if (rows[0].user_id === req.session.userId) {
+      await pool.query("DELETE FROM user_quizzes WHERE id = ?", [id]);
+      return res.json({ ok: true, deleted: "user_quiz" });
+    }
+
+    hasForeignUserQuiz = true;
   }
 
   const [qrows] = await pool.query(
@@ -2346,7 +2350,10 @@ app.delete("/api/quizzes/:id", requireLogin, wrap(async (req, res) => {
       WHERE q.id = ?`,
     [id]
   );
-  if (!qrows.length) return res.status(404).json({ message: "not found" });
+  if (!qrows.length) {
+    if (hasForeignUserQuiz) return res.status(403).json({ message: "forbidden" });
+    return res.status(404).json({ message: "not found" });
+  }
   if (qrows[0].note_user_id !== req.session.userId) return res.status(403).json({ message: "forbidden" });
 
   await pool.query("DELETE FROM note_quizzes WHERE id = ?", [id]);
