@@ -2032,17 +2032,6 @@ app.post(
     });
   })
 );
-    await incrementUsageCount(req.session.userId, "quiz_generation", 1);
-
-    res.json({
-      ok: true,
-      generatedCount: quizzes.length,
-      usage: {
-        featureCode: "quiz_generation",
-        usedAfter: (req.usageLimit?.used || 0) + 1,
-        limit: req.usageLimit?.limit,
-      },
-    });
 
 app.post("/api/quizzes", requireLogin, wrap(async (req, res) => {
   const noteId = Number(req.body.note_id);
