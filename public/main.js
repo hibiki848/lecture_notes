@@ -223,7 +223,7 @@ $("university_name")?.addEventListener("change", refreshList);
 
 if ($("list")) $("list").textContent = "コミュニティ名を入れて検索してください。";
 
-// ===== 非公開コミュニティ検索（参加申請つき）=====
+// ===== コミュニティ検索（参加申請つき）=====
 async function searchCommunities() {
   const qEl = document.getElementById("communitySearchQ");
   const box = document.getElementById("communitySearchResult");
@@ -240,6 +240,7 @@ async function searchCommunities() {
   try {
     const data = await api(`/api/communities?q=${encodeURIComponent(q)}`);
     const list = data.communities || [];
+    const loggedIn = !!data.loggedIn;
 
     if (!list.length) {
       box.innerHTML = `<div class="muted">見つかりませんでした</div>`;
@@ -253,6 +254,7 @@ async function searchCommunities() {
       let right = "";
       if (member) right = `<span class="muted">参加済み</span>`;
       else if (pending) right = `<span class="muted">申請済み</span>`;
+      else if (!loggedIn) right = `<span class="muted">参加申請はログイン後に利用できます</span>`;
       else right = `<button data-req="${c.id}">参加申請</button>`;
 
       return `
