@@ -1473,13 +1473,14 @@ app.delete("/api/communities/:id", requireLogin, wrap(async (req, res) => {
   }
 }));
 
-// コミュニティ検索（ログイン必須にするなら requireLogin を付ける）
-app.get("/api/communities", requireLogin, wrap(async (req, res) => {
+// コミュニティ検索（未ログインでも利用可）
+app.get("/api/communities", wrap(async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (!q) return res.json({ communities: [] });
 
   const like = `%${q}%`;
-  const userId = req.session.userId;
+  const userId = req.session?.userId || null;
+  const loggedIn = !!userId;
 
   const [rows] = await pool.query(
     `SELECT
@@ -1497,7 +1498,7 @@ app.get("/api/communities", requireLogin, wrap(async (req, res) => {
     [userId, userId, like]
   );
 
-  res.json({ communities: rows });
+  res.json({ communities: rows, loggedIn });
 }));
 
 //--------参加申請API--------
