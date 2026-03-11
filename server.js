@@ -1996,20 +1996,42 @@ app.post(
   requireUsageLimit("quiz_generation", "quiz_generation_monthly_limit"),
   wrap(async (req, res) => {
     const noteId = Number(req.params.id);
+    const userId = req.session?.userId || req.session?.user?.id || req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "ログインが必要です" });
+    }
+
     const note = await getNoteById(noteId);
     const perm = canEditNote(req, note);
-    if (!perm.ok) return res.status(perm.status).json({ message: perm.message });
+    if (!perm.ok) {
+      return res.status(perm.status).json({ message: perm.message });
+    }
 
     const quizzes = generateQuizzesFromBodyRaw(note.body_raw, { limit: 10 });
 
     for (const q of quizzes) {
       await pool.query(
-        `INSERT INTO note_quizzes (note_id, type, question, answer, source_line)
-         VALUES (?, ?, ?, ?, ?)`,
-        [noteId, q.type, q.question, q.answer, q.source_line]
+        `INSERT INTO note_quizzes (user_id, note_id, type, question, answer, source_line)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, noteId, q.type, q.question, q.answer, q.source_line]
       );
     }
 
+    await incrementUsageCount(userId, "quiz_generation", 1);
+
+    res.json({
+      ok: true,
+      generatedCount: quizzes.length,
+      quizzes,
+      usage: {
+        featureCode: "quiz_generation",
+        usedAfter: (req.usageLimit?.used || 0) + 1,
+        limit: req.usageLimit?.limit,
+      },
+    });
+  })
+);
     await incrementUsageCount(req.session.userId, "quiz_generation", 1);
 
     res.json({
@@ -2021,8 +2043,6 @@ app.post(
         limit: req.usageLimit?.limit,
       },
     });
-  })
-);
 
 app.post("/api/quizzes", requireLogin, wrap(async (req, res) => {
   const noteId = Number(req.body.note_id);
@@ -2057,12 +2077,11 @@ app.post("/api/quizzes", requireLogin, wrap(async (req, res) => {
     });
   }
 
-  const [result] = await pool.query(
-    `INSERT INTO note_quizzes (note_id, type, question, answer)
-     VALUES (?, ?, ?, ?)`,
-    [noteId, type, question, answer]
-  );
-
+const [result] = await pool.query(
+  `INSERT INTO note_quizzes (user_id, note_id, type, question, answer)
+   VALUES (?, ?, ?, ?, ?)`,
+  [req.session.userId, noteId, type, question, answer]
+);
   res.status(201).json({
     ok: true,
     quizId: result.insertId,
