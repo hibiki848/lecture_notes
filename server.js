@@ -52,13 +52,23 @@ function getOpenAIClient() {
 
 const app = express();
 
+const StripeLib = process.env.STRIPE_SECRET_KEY ? require("stripe") : null;
+const stripe = StripeLib ? new StripeLib(process.env.STRIPE_SECRET_KEY) : null;
+
 // Railwayなどプロキシ配下
 if (process.env.NODE_ENV === "production") {
   app.set("trust proxy", 1);
 }
 
 // ---------- Middlewares ----------
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: "1mb",
+  verify: (req, res, buf) => {
+    if (req.originalUrl === "/api/billing/webhook") {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 // ---------- Session Store ----------
@@ -1552,6 +1562,511 @@ app.post("/api/communities/:id/leave", requireLogin, wrap(async (req, res) => {
   );
 
   res.json({ ok: true });
+}));
+
+
+
+// ---------- Billing / Subscription Helpers ----------
+const PLAN_FREE = "free";
+const PLAN_PRO = "pro";
+const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
+
+const PLAN_FEATURES = {
+  free: {
+    max_notes: 30,
+    ai_summary_monthly_limit: 20,
+    quiz_generation_monthly_limit: 10,
+    max_custom_quizzes: 30,
+    can_export_pdf: false,
+  },
+  pro: {
+    max_notes: -1,
+    ai_summary_monthly_limit: 500,
+    quiz_generation_monthly_limit: 300,
+    max_custom_quizzes: 1000,
+    can_export_pdf: true,
+  },
+};
+
+function getCurrentPeriodMonth() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+async function getUserSubscription(userId) {
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM subscriptions
+      WHERE user_id = ?
+      LIMIT 1`,
+    [userId]
+  );
+  return rows[0] || null;
+}
+
+function isSubscriptionActive(sub) {
+  if (!sub) return false;
+  return ACTIVE_SUBSCRIPTION_STATUSES.has(String(sub.subscription_status || ""));
+}
+
+function resolvePlanCode(sub) {
+  if (sub && isSubscriptionActive(sub) && sub.plan_code === PLAN_PRO) {
+    return PLAN_PRO;
+  }
+  return PLAN_FREE;
+}
+
+async function getUsageCount(userId, featureCode, periodMonth = getCurrentPeriodMonth()) {
+  const [rows] = await pool.query(
+    `SELECT used_count
+       FROM usage_counters
+      WHERE user_id = ? AND feature_code = ? AND period_month = ?
+      LIMIT 1`,
+    [userId, featureCode, periodMonth]
+  );
+  return rows.length ? Number(rows[0].used_count) : 0;
+}
+
+async function incrementUsageCount(userId, featureCode, incrementBy = 1, periodMonth = getCurrentPeriodMonth()) {
+  await pool.query(
+    `INSERT INTO usage_counters (user_id, feature_code, period_month, used_count)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE used_count = used_count + VALUES(used_count)`,
+    [userId, featureCode, periodMonth, incrementBy]
+  );
+}
+
+async function ensureStripeCustomerForUser(userId) {
+  const [rows] = await pool.query("SELECT id, username, stripe_customer_id FROM users WHERE id = ? LIMIT 1", [userId]);
+  if (!rows.length) throw new Error("user not found");
+  const user = rows[0];
+
+  if (user.stripe_customer_id) return user.stripe_customer_id;
+  if (!stripe) throw new Error("Stripe is not configured");
+
+  const customer = await stripe.customers.create({
+    metadata: { app_user_id: String(userId) },
+    name: user.username,
+  });
+
+  await pool.query("UPDATE users SET stripe_customer_id = ? WHERE id = ?", [customer.id, userId]);
+  return customer.id;
+}
+
+async function upsertSubscriptionFromStripe(subscription, customerId) {
+  const [userRows] = await pool.query(
+    "SELECT id FROM users WHERE stripe_customer_id = ? LIMIT 1",
+    [customerId]
+  );
+  if (!userRows.length) {
+    throw new Error(`Stripe customer ${customerId} is not linked to any user`);
+  }
+
+  const userId = userRows[0].id;
+  const item = subscription.items?.data?.[0];
+  const stripePriceId = item?.price?.id || null;
+  const planCode = stripePriceId === process.env.STRIPE_PRICE_ID_PRO_MONTHLY ? PLAN_PRO : PLAN_FREE;
+
+  await pool.query(
+    `INSERT INTO subscriptions (
+      user_id,
+      stripe_customer_id,
+      stripe_subscription_id,
+      plan_code,
+      subscription_status,
+      current_period_end,
+      cancel_at_period_end
+    ) VALUES (?, ?, ?, ?, ?, FROM_UNIXTIME(?), ?)
+    ON DUPLICATE KEY UPDATE
+      stripe_customer_id = VALUES(stripe_customer_id),
+      plan_code = VALUES(plan_code),
+      subscription_status = VALUES(subscription_status),
+      current_period_end = VALUES(current_period_end),
+      cancel_at_period_end = VALUES(cancel_at_period_end),
+      updated_at = CURRENT_TIMESTAMP`,
+    [
+      userId,
+      customerId,
+      subscription.id,
+      planCode,
+      subscription.status,
+      Number(subscription.current_period_end || 0),
+      subscription.cancel_at_period_end ? 1 : 0,
+    ]
+  );
+}
+
+async function markSubscriptionCanceledByCustomerId(customerId) {
+  await pool.query(
+    `UPDATE subscriptions
+        SET subscription_status = 'canceled',
+            cancel_at_period_end = 0,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE stripe_customer_id = ?`,
+    [customerId]
+  );
+}
+
+function requireActiveSubscription(req, res, next) {
+  if (!req.billing?.isActiveSubscription) {
+    return res.status(402).json({
+      message: "有料プランの契約が必要です",
+      code: "SUBSCRIPTION_REQUIRED",
+    });
+  }
+  next();
+}
+
+function requirePro(req, res, next) {
+  if (req.billing?.planCode !== PLAN_PRO) {
+    return res.status(403).json({
+      message: "Proプラン限定機能です",
+      code: "PRO_REQUIRED",
+    });
+  }
+  next();
+}
+
+async function attachBillingContext(req, res, next) {
+  if (!req.session?.userId) return next();
+
+  const sub = await getUserSubscription(req.session.userId);
+  const planCode = resolvePlanCode(sub);
+
+  req.billing = {
+    subscription: sub,
+    planCode,
+    isActiveSubscription: isSubscriptionActive(sub),
+    features: PLAN_FEATURES[planCode],
+  };
+  next();
+}
+
+function requireUsageLimit(featureCode, limitKey) {
+  return wrap(async (req, res, next) => {
+    if (!req.session?.userId) {
+      return res.status(401).json({ message: "ログインしてください" });
+    }
+
+    if (!req.billing) {
+      const sub = await getUserSubscription(req.session.userId);
+      const planCode = resolvePlanCode(sub);
+      req.billing = {
+        subscription: sub,
+        planCode,
+        isActiveSubscription: isSubscriptionActive(sub),
+        features: PLAN_FEATURES[planCode],
+      };
+    }
+
+    const limit = req.billing.features?.[limitKey];
+    if (limit === -1 || limit == null) return next();
+
+    const used = await getUsageCount(req.session.userId, featureCode);
+    if (used >= limit) {
+      return res.status(429).json({
+        message: "この機能の月間利用上限に達しました",
+        code: "USAGE_LIMIT_EXCEEDED",
+        featureCode,
+        used,
+        limit,
+      });
+    }
+
+    req.usageLimit = { featureCode, limit, used };
+    next();
+  });
+}
+
+app.use(attachBillingContext);
+
+// ---------- Billing APIs ----------
+app.post("/api/billing/create-checkout-session", requireLogin, wrap(async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ message: "Stripe is not configured" });
+  }
+  if (!process.env.STRIPE_PRICE_ID_PRO_MONTHLY) {
+    return res.status(500).json({ message: "STRIPE_PRICE_ID_PRO_MONTHLY is missing" });
+  }
+
+  const customerId = await ensureStripeCustomerForUser(req.session.userId);
+
+  const session = await stripe.checkout.sessions.create({
+    mode: "subscription",
+    customer: customerId,
+    payment_method_types: ["card"],
+    line_items: [{ price: process.env.STRIPE_PRICE_ID_PRO_MONTHLY, quantity: 1 }],
+    success_url: `${process.env.APP_BASE_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${process.env.APP_BASE_URL}/billing/cancel`,
+    metadata: {
+      app_user_id: String(req.session.userId),
+    },
+  });
+
+  res.json({ url: session.url, sessionId: session.id });
+}));
+
+app.post("/api/billing/portal", requireLogin, wrap(async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ message: "Stripe is not configured" });
+  }
+
+  const customerId = await ensureStripeCustomerForUser(req.session.userId);
+  const portal = await stripe.billingPortal.sessions.create({
+    customer: customerId,
+    return_url: `${process.env.APP_BASE_URL}/settings/billing`,
+  });
+
+  res.json({ url: portal.url });
+}));
+
+app.post("/api/billing/webhook", wrap(async (req, res) => {
+  if (!stripe) {
+    return res.status(500).send("Stripe is not configured");
+  }
+
+  const signature = req.headers["stripe-signature"];
+  if (!signature || !process.env.STRIPE_WEBHOOK_SECRET) {
+    return res.status(400).send("Missing webhook signature or secret");
+  }
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.rawBody, signature, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    return res.status(400).send(`Webhook signature verification failed: ${err.message}`);
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const [existing] = await conn.query(
+      "SELECT id FROM payment_events WHERE event_id = ? LIMIT 1",
+      [event.id]
+    );
+    if (existing.length) {
+      await conn.rollback();
+      return res.status(200).json({ received: true, duplicate: true });
+    }
+
+    await conn.query(
+      `INSERT INTO payment_events (event_id, event_type, payload)
+       VALUES (?, ?, ?)`,
+      [event.id, event.type, JSON.stringify(event)]
+    );
+
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const checkoutSession = event.data.object;
+        if (checkoutSession.mode === "subscription" && checkoutSession.subscription && checkoutSession.customer) {
+          const subscription = await stripe.subscriptions.retrieve(checkoutSession.subscription);
+          await upsertSubscriptionFromStripe(subscription, checkoutSession.customer);
+        }
+        break;
+      }
+      case "customer.subscription.updated":
+      case "customer.subscription.created": {
+        const subscription = event.data.object;
+        await upsertSubscriptionFromStripe(subscription, subscription.customer);
+        break;
+      }
+      case "customer.subscription.deleted": {
+        const subscription = event.data.object;
+        await markSubscriptionCanceledByCustomerId(subscription.customer);
+        break;
+      }
+      case "invoice.payment_failed": {
+        const invoice = event.data.object;
+        if (invoice.customer) {
+          await conn.query(
+            `UPDATE subscriptions
+                SET subscription_status = 'past_due',
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE stripe_customer_id = ?`,
+            [invoice.customer]
+          );
+        }
+        break;
+      }
+      default:
+        break;
+    }
+
+    await conn.commit();
+    return res.status(200).json({ received: true });
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}));
+
+app.get("/api/billing/me", requireLogin, wrap(async (req, res) => {
+  const subscription = await getUserSubscription(req.session.userId);
+  const planCode = resolvePlanCode(subscription);
+  const features = PLAN_FEATURES[planCode];
+
+  const usage = {
+    ai_summary: await getUsageCount(req.session.userId, "ai_summary"),
+    quiz_generation: await getUsageCount(req.session.userId, "quiz_generation"),
+  };
+
+  res.json({
+    planCode,
+    isActiveSubscription: isSubscriptionActive(subscription),
+    subscription,
+    features,
+    usage,
+  });
+}));
+
+app.post("/api/billing/cancel", requireLogin, wrap(async (req, res) => {
+  if (!stripe) {
+    return res.status(500).json({ message: "Stripe is not configured" });
+  }
+
+  const subscription = await getUserSubscription(req.session.userId);
+  if (!subscription?.stripe_subscription_id) {
+    return res.status(404).json({ message: "アクティブなサブスクリプションがありません" });
+  }
+
+  const canceled = await stripe.subscriptions.update(subscription.stripe_subscription_id, {
+    cancel_at_period_end: true,
+  });
+
+  await upsertSubscriptionFromStripe(canceled, canceled.customer);
+
+  res.json({
+    ok: true,
+    cancelAtPeriodEnd: canceled.cancel_at_period_end,
+    currentPeriodEnd: canceled.current_period_end,
+  });
+}));
+
+// ---------- Pro-gated Feature APIs (MVP sample) ----------
+app.post("/api/notes/:id/export-pdf", requireLogin, requirePro, wrap(async (req, res) => {
+  const noteId = Number(req.params.id);
+  const note = await getNoteById(noteId);
+  const perm = await canEditNote(req, note);
+  if (!perm.ok) return res.status(perm.status).json({ message: perm.message });
+
+  // MVPでは実PDF生成ではなくサンプルレスポンス。
+  res.json({
+    ok: true,
+    noteId,
+    message: "PDF生成ジョブを開始しました（MVPサンプル）",
+    downloadUrl: `/api/notes/${noteId}/export-pdf/download/sample.pdf`,
+  });
+}));
+
+app.post(
+  "/api/notes/:id/ai-summary",
+  requireLogin,
+  requireUsageLimit("ai_summary", "ai_summary_monthly_limit"),
+  wrap(async (req, res) => {
+    const noteId = Number(req.params.id);
+    const note = await getNoteById(noteId);
+    const perm = canEditNote(req, note);
+    if (!perm.ok) return res.status(perm.status).json({ message: perm.message });
+
+    const summary = String(note.body_raw || "").split(/\r?\n/).filter(Boolean).slice(0, 5).join(" ");
+    await incrementUsageCount(req.session.userId, "ai_summary", 1);
+
+    res.json({
+      ok: true,
+      noteId,
+      summary: summary || "（要約対象が不足しています）",
+      usage: {
+        featureCode: "ai_summary",
+        usedAfter: (req.usageLimit?.used || 0) + 1,
+        limit: req.usageLimit?.limit,
+      },
+    });
+  })
+);
+
+app.post(
+  "/api/notes/:id/generate-quiz",
+  requireLogin,
+  requireUsageLimit("quiz_generation", "quiz_generation_monthly_limit"),
+  wrap(async (req, res) => {
+    const noteId = Number(req.params.id);
+    const note = await getNoteById(noteId);
+    const perm = canEditNote(req, note);
+    if (!perm.ok) return res.status(perm.status).json({ message: perm.message });
+
+    const quizzes = generateQuizzesFromBodyRaw(note.body_raw, { limit: 10 });
+
+    for (const q of quizzes) {
+      await pool.query(
+        `INSERT INTO note_quizzes (note_id, type, question, answer, source_line)
+         VALUES (?, ?, ?, ?, ?)`,
+        [noteId, q.type, q.question, q.answer, q.source_line]
+      );
+    }
+
+    await incrementUsageCount(req.session.userId, "quiz_generation", 1);
+
+    res.json({
+      ok: true,
+      generatedCount: quizzes.length,
+      usage: {
+        featureCode: "quiz_generation",
+        usedAfter: (req.usageLimit?.used || 0) + 1,
+        limit: req.usageLimit?.limit,
+      },
+    });
+  })
+);
+
+app.post("/api/quizzes", requireLogin, wrap(async (req, res) => {
+  const noteId = Number(req.body.note_id);
+  const question = String(req.body.question || "").trim();
+  const answer = String(req.body.answer || "").trim();
+  const type = String(req.body.type || "qa").trim();
+
+  if (!noteId || !question) {
+    return res.status(400).json({ message: "note_id and question are required" });
+  }
+
+  const note = await getNoteById(noteId);
+  const perm = canEditNote(req, note);
+  if (!perm.ok) return res.status(perm.status).json({ message: perm.message });
+
+  const [countRows] = await pool.query(
+    `SELECT COUNT(*) AS cnt
+       FROM note_quizzes q
+       JOIN notes n ON n.id = q.note_id
+      WHERE n.user_id = ?`,
+    [req.session.userId]
+  );
+
+  const maxCustomQuizzes = req.billing?.features?.max_custom_quizzes ?? 30;
+  const currentCount = Number(countRows[0]?.cnt || 0);
+  if (maxCustomQuizzes !== -1 && currentCount >= maxCustomQuizzes) {
+    return res.status(429).json({
+      message: "作成可能なクイズ数の上限に達しました",
+      code: "CUSTOM_QUIZ_LIMIT_EXCEEDED",
+      limit: maxCustomQuizzes,
+      used: currentCount,
+    });
+  }
+
+  const [result] = await pool.query(
+    `INSERT INTO note_quizzes (note_id, type, question, answer)
+     VALUES (?, ?, ?, ?)`,
+    [noteId, type, question, answer]
+  );
+
+  res.status(201).json({
+    ok: true,
+    quizId: result.insertId,
+    remaining: maxCustomQuizzes === -1 ? null : Math.max(maxCustomQuizzes - (currentCount + 1), 0),
+  });
 }));
 
 // ---------- Error Handler ----------
