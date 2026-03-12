@@ -11,19 +11,21 @@
   <h1>作成クイズ一覧</h1>
 
   <div class="card">
-    <div class="row">
+    <div class="row quiz-filter-row">
       <select id="filterType">
         <option value="">全形式</option>
         <option value="multiple_choice">4択</option>
         <option value="written">記述</option>
         <option value="true_false">○×</option>
       </select>
+      <input id="keyword" type="search" placeholder="キーワードでクイズを検索" aria-label="キーワード検索" />
+      <button id="btnClearKeyword" type="button">クリア</button>
       <button id="btnReload" type="button">更新</button>
     </div>
     <div id="message" class="small" style="margin-top:8px;"></div>
     <div id="quizList"></div>
   </div>
 
-  <script src="./my-quizzes.js?v=1"></script>
+  <script src="./my-quizzes.js?v=2"></script>
 </body>
 </html>

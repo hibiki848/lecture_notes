@@ -1,5 +1,7 @@
 function $(id) { return document.getElementById(id); }
 
+let allRows = [];
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -16,15 +18,34 @@ function esc(s) {
   return String(s || "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
 }
 
-async function load() {
-  const type = $("filterType").value;
-  const q = type ? `?quiz_type=${encodeURIComponent(type)}` : "";
-  const result = await api(`/api/quizzes/mine${q}`);
-  const rows = result.data.quizzes;
+function normalizeForSearch(s) {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFKC");
+}
+
+function buildSearchTarget(qz) {
+  const choices = [qz.choice_1, qz.choice_2, qz.choice_3, qz.choice_4].filter(Boolean).join(" ");
+  const tags = Array.isArray(qz.tags)
+    ? qz.tags.join(" ")
+    : (typeof qz.tags === "string" ? qz.tags : "");
+  return normalizeForSearch([
+    qz.title,
+    qz.question_text,
+    choices,
+    qz.explanation,
+    tags,
+  ].join(" "));
+}
+
+function render(rows, options = {}) {
+  const hasKeyword = Boolean(options.keyword);
   $("message").textContent = `${rows.length}件`;
 
   if (!rows.length) {
-    $("quizList").innerHTML = "<div class='small'>クイズはまだありません。</div>";
+    $("quizList").innerHTML = hasKeyword
+      ? "<div class='small'>該当するクイズが見つかりません</div>"
+      : "<div class='small'>クイズはまだありません。</div>";
     return;
   }
 
@@ -60,8 +81,31 @@ async function load() {
   });
 }
 
+function applyFilters() {
+  const keyword = normalizeForSearch($("keyword").value.trim());
+  const filteredRows = keyword
+    ? allRows.filter((qz) => buildSearchTarget(qz).includes(keyword))
+    : allRows;
+
+  render(filteredRows, { keyword });
+}
+
+async function load() {
+  const type = $("filterType").value;
+  const q = type ? `?quiz_type=${encodeURIComponent(type)}` : "";
+  const result = await api(`/api/quizzes/mine${q}`);
+  allRows = result.data.quizzes || [];
+  applyFilters();
+}
+
 (async () => {
   $("btnReload").addEventListener("click", load);
   $("filterType").addEventListener("change", load);
+  $("keyword").addEventListener("input", applyFilters);
+  $("btnClearKeyword").addEventListener("click", () => {
+    $("keyword").value = "";
+    applyFilters();
+    $("keyword").focus();
+  });
   await load();
 })();
