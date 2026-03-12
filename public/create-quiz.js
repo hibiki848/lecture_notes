@@ -79,7 +79,7 @@ async function saveQuiz() {
       method: editId ? "PUT" : "POST",
       body: JSON.stringify(payload),
     });
-    setMessage(editId ? `更新しました（ID: ${result.id || editId}）` : `保存しました（ID: ${result.id}）`);
+    setMessage("保存されました");
   } catch (e) {
     console.error("saveQuiz failed", e);
     setMessage(e.message, true);
