@@ -341,8 +341,6 @@ function validateUserQuizPayload(payload = {}) {
   if (normalized.quiz_type === "fill_blank") {
     const hasBlankMarker =
       /_{3,}/.test(normalized.question_text) ||
-      /（\s*）/.test(normalized.question_text) ||
-      /\(\s*\)/.test(normalized.question_text) ||
       /（[　\s]+）/.test(normalized.question_text) ||
       /\([　\s]+\)/.test(normalized.question_text);
 
