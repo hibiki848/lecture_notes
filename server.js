@@ -339,8 +339,15 @@ function validateUserQuizPayload(payload = {}) {
   }
 
   if (normalized.quiz_type === "fill_blank") {
-    if (!/[（(＿_]{1}|_{3,}/.test(normalized.question_text)) {
-      errors.push("穴埋め問題では、問題文に空欄（例：（　　　））を含めてください");
+    const hasBlankMarker =
+      /_{3,}/.test(normalized.question_text) ||
+      /（\s*）/.test(normalized.question_text) ||
+      /\(\s*\)/.test(normalized.question_text) ||
+      /（[　\s]+）/.test(normalized.question_text) ||
+      /\([　\s]+\)/.test(normalized.question_text);
+
+    if (!hasBlankMarker) {
+      errors.push("穴埋め問題では、問題文に空欄（例：（　　　）や ___）を含めてください");
     }
   }
 
