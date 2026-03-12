@@ -332,3 +332,12 @@ body > a{
 @media (max-width: 700px){
   .billing-grid{ grid-template-columns: 1fr; }
 }
+
+.quiz-filter-row > select,
+.quiz-filter-row > input {
+  flex: 1 1 240px;
+}
+
+#btnClearKeyword {
+  white-space: nowrap;
+}
