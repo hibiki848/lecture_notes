@@ -57,6 +57,13 @@ function setPreview(text) {
   if ($("preview")) $("preview").textContent = text || "";
 }
 
+function setSaveAnnouncement(message, kind = "success") {
+  const el = $("save_announce");
+  if (!el) return;
+  el.textContent = message || "";
+  el.className = `small hint image-status ${kind}`;
+}
+
 function validateForSave(data) {
   const missing = [];
   const isCommunity = !!data.community_id;
@@ -234,6 +241,8 @@ async function onSave() {
     const data = getForm();
     if (!validateForSave(data)) return;
 
+    setSaveAnnouncement("", "info");
+
     const r = await api("/api/notes", {
       method: "POST",
       body: JSON.stringify(data),
@@ -251,6 +260,7 @@ async function onSave() {
     }
 
     alert(msg);
+    setSaveAnnouncement("保存されました");
 
     // 公開投稿なら検索欄同期 & 一覧更新
     if (!data.community_id) {
@@ -260,6 +270,7 @@ async function onSave() {
 
     setPreview("");
   } catch (e) {
+    setSaveAnnouncement("", "info");
     alert("保存失敗: " + e.message);
   }
 }
