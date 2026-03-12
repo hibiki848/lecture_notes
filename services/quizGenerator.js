@@ -4,6 +4,63 @@ const { parseAndValidateQuizResponse, filterLowQualityQuizzes } = require("./qui
 
 const DEFAULT_MODEL = process.env.OPENAI_QUIZ_MODEL || "gpt-4.1-mini";
 
+function shuffleInPlace(items, random = Math.random) {
+  for (let i = items.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [items[i], items[j]] = [items[j], items[i]];
+  }
+  return items;
+}
+
+function buildBalancedAnswerIndices(count, random = Math.random) {
+  const indices = [];
+  for (let i = 0; i < count; i++) {
+    indices.push(i % 4);
+  }
+  return shuffleInPlace(indices, random);
+}
+
+function alignQuizAnswerIndex(quiz, targetAnswerIndex, random = Math.random) {
+  const correctChoice = quiz.choices[quiz.answerIndex];
+  const wrongChoices = quiz.choices.filter((_, index) => index !== quiz.answerIndex);
+  shuffleInPlace(wrongChoices, random);
+
+  const alignedChoices = new Array(4);
+  alignedChoices[targetAnswerIndex] = correctChoice;
+
+  let wrongPtr = 0;
+  for (let i = 0; i < alignedChoices.length; i++) {
+    if (i === targetAnswerIndex) continue;
+    alignedChoices[i] = wrongChoices[wrongPtr++];
+  }
+
+  return {
+    ...quiz,
+    choices: alignedChoices,
+    answerIndex: targetAnswerIndex,
+  };
+}
+
+function rebalanceQuizAnswerPositions(quizzes, random = Math.random) {
+  const targetIndices = buildBalancedAnswerIndices(quizzes.length, random);
+  return quizzes.map((quiz, index) => alignQuizAnswerIndex(quiz, targetIndices[index], random));
+}
+
+function summarizeAnswerPositionDistribution(quizzes) {
+  const counts = [0, 0, 0, 0];
+  for (const quiz of quizzes) {
+    if (Number.isInteger(quiz.answerIndex) && quiz.answerIndex >= 0 && quiz.answerIndex < 4) {
+      counts[quiz.answerIndex] += 1;
+    }
+  }
+  return {
+    "1": counts[0],
+    "2": counts[1],
+    "3": counts[2],
+    "4": counts[3],
+  };
+}
+
 function formatQuizForStorage(quiz) {
   const choicesText = quiz.choices.map((c, i) => `${i + 1}. ${c}`).join("\n");
   return {
@@ -112,9 +169,19 @@ async function generateQuizzesWithQualityPipeline({ openai, note, targetCount = 
     throw err;
   }
 
-  return accepted.slice(0, targetCount).map(formatQuizForStorage);
+  const selectedQuizzes = accepted.slice(0, targetCount);
+  const balancedQuizzes = rebalanceQuizAnswerPositions(selectedQuizzes);
+  logger.info("quiz_pipeline:answer_position_distribution", {
+    count: balancedQuizzes.length,
+    distribution: summarizeAnswerPositionDistribution(balancedQuizzes),
+  });
+
+  return balancedQuizzes.map(formatQuizForStorage);
 }
 
 module.exports = {
   generateQuizzesWithQualityPipeline,
+  buildBalancedAnswerIndices,
+  rebalanceQuizAnswerPositions,
+  summarizeAnswerPositionDistribution,
 };
