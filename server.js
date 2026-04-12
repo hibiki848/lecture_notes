@@ -1028,6 +1028,85 @@ app.get("/api/community-notes/calendar-summary", requireLogin, wrap(async (req, 
 }));
 
 // 詳細：閲覧権限に従う（community or private）
+
+app.get("/api/community-quizzes", requireLogin, wrap(async (req, res) => {
+  const userId = req.session.userId;
+  const date = parseDateFilter(req.query.date);
+  const search = String(req.query.search || "").trim();
+  const sortOrder = normalizeSortOrder(req.query.sort);
+  const choiceSelect = await buildNoteQuizSelectChoiceFragments();
+
+  const [crows] = await pool.query(
+    `SELECT community_id FROM user_communities WHERE user_id = ?`,
+    [userId]
+  );
+  if (!crows.length) return res.json([]);
+  const ids = crows.map((r) => r.community_id);
+
+  let sql = `SELECT nq.id,
+                    nq.note_id,
+                    CONCAT('ノートクイズ #', nq.id) AS title,
+                    nq.question AS question_text,
+                    nq.type AS quiz_type,
+                    ${choiceSelect.choice1},
+                    ${choiceSelect.choice2},
+                    ${choiceSelect.choice3},
+                    ${choiceSelect.choice4},
+                    ${choiceSelect.choices},
+                    ${choiceSelect.options},
+                    nq.answer AS correct_answer,
+                    nq.created_at,
+                    nq.updated_at,
+                    n.community_id,
+                    c.name AS community_name
+               FROM note_quizzes nq
+               JOIN notes n ON n.id = nq.note_id
+               JOIN communities c ON c.id = n.community_id
+              WHERE n.community_id IN (?)`;
+  const params = [ids];
+
+  if (date) {
+    sql += " AND DATE(CONVERT_TZ(nq.created_at, '+00:00', '+09:00')) = ?";
+    params.push(date);
+  }
+  if (search) {
+    sql += " AND (nq.question LIKE ? OR nq.answer LIKE ?)";
+    params.push(`%${search}%`, `%${search}%`);
+  }
+  sql += ` ORDER BY nq.created_at ${sortOrder}, nq.id ${sortOrder}`;
+
+  const [rows] = await pool.query(sql, params);
+  const normalizedRows = rows.map((row) => normalizeQuizChoices(row));
+  res.json(normalizedRows);
+}));
+
+app.get("/api/community-quizzes/calendar-summary", requireLogin, wrap(async (req, res) => {
+  const userId = req.session.userId;
+  const month = parseMonthFilter(req.query.month);
+  if (!month) return res.status(400).json({ message: "month(YYYY-MM) is required" });
+
+  const [crows] = await pool.query(
+    `SELECT community_id FROM user_communities WHERE user_id = ?`,
+    [userId]
+  );
+  if (!crows.length) return res.json({ month, days: [] });
+  const ids = crows.map((r) => r.community_id);
+
+  const [rows] = await pool.query(
+    `SELECT DATE_FORMAT(CONVERT_TZ(nq.created_at, '+00:00', '+09:00'), '%Y-%m-%d') AS date,
+            COUNT(*) AS count
+       FROM note_quizzes nq
+       JOIN notes n ON n.id = nq.note_id
+      WHERE n.community_id IN (?)
+        AND DATE_FORMAT(CONVERT_TZ(nq.created_at, '+00:00', '+09:00'), '%Y-%m') = ?
+      GROUP BY date
+      ORDER BY date ASC`,
+    [ids, month]
+  );
+
+  res.json({ month, days: rows });
+}));
+
 app.get("/api/notes/:id", wrap(async (req, res) => {
   const id = Number(req.params.id);
 

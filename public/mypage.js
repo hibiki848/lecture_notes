@@ -234,6 +234,7 @@ const myPageState = {
   communitySearch: "",
   communitySort: "desc",
   communityNotes: [],
+  communityQuizzes: [],
   communitySummary: new Map(),
   communityLoading: false,
 };
@@ -256,9 +257,9 @@ function monthLabel(monthKey) {
 }
 
 function formatDateLabel(value) {
-  if (!value) return "対象日: すべての日付";
+  if (!value) return "対象日: 未選択";
   const d = new Date(`${value}T00:00:00+09:00`);
-  if (Number.isNaN(d.getTime())) return "対象日: すべての日付";
+  if (Number.isNaN(d.getTime())) return "対象日: 未選択";
   const label = d.toLocaleDateString("ja-JP", {
     year: "numeric",
     month: "long",
@@ -348,6 +349,12 @@ function renderMyNotesAndQuizzes() {
 
   updateSelectedDateIndicator("mySelectedDate", myPageState.mySelectedDate);
 
+  if (!myPageState.mySelectedDate) {
+    setDaySummary("myDayCountSummary", "日付を選択すると、その日に作成したノートとクイズを表示します。");
+    listEl.innerHTML = `<div class="small">日付を選択してください。選択後にノートとクイズを表示します。</div>`;
+    return;
+  }
+
   const noteMap = new Map(myPageState.myNotes.map((n) => [String(n.id), n]));
   const notesHtml = myPageState.myNotes.map((n) => {
     const tag = visibilityLabel(n.visibility);
@@ -401,7 +408,7 @@ function renderMyNotesAndQuizzes() {
   setDaySummary("myDayCountSummary", summary);
 
   if (!myPageState.myNotes.length && !myPageState.myQuizzes.length) {
-    listEl.innerHTML = `<div class="small">条件に合うノート・クイズはありません。</div>`;
+    listEl.innerHTML = `<div class="small">この日に作成したノート・クイズはありません。</div>`;
     return;
   }
 
@@ -469,20 +476,27 @@ async function loadMyNotes() {
   if (listEl) listEl.innerHTML = "読み込み中…";
 
   try {
-    const [noteSummary, quizSummary, noteRows, myQuizData] = await Promise.all([
+    const requests = [
       api(buildUrl("/api/my-notes/calendar-summary", { month: myPageState.myCurrentMonth })),
       api(buildUrl("/api/quizzes/mine/calendar-summary", { month: myPageState.myCurrentMonth })),
-      api(buildUrl("/api/my-notes", {
-        date: myPageState.mySelectedDate,
-        search: myPageState.mySearch,
-        sort: myPageState.mySort,
-      })),
-      api(buildUrl("/api/quizzes/mine", {
-        date: myPageState.mySelectedDate,
-        search: myPageState.mySearch,
-        sort: myPageState.mySort,
-      })),
-    ]);
+    ];
+
+    if (myPageState.mySelectedDate) {
+      requests.push(
+        api(buildUrl("/api/my-notes", {
+          date: myPageState.mySelectedDate,
+          search: myPageState.mySearch,
+          sort: myPageState.mySort,
+        })),
+        api(buildUrl("/api/quizzes/mine", {
+          date: myPageState.mySelectedDate,
+          search: myPageState.mySearch,
+          sort: myPageState.mySort,
+        }))
+      );
+    }
+
+    const [noteSummary, quizSummary, noteRows, myQuizData] = await Promise.all(requests);
 
     const summaryMap = new Map();
     (noteSummary?.days || []).forEach((d) => {
@@ -493,8 +507,8 @@ async function loadMyNotes() {
     });
 
     myPageState.mySummary = summaryMap;
-    myPageState.myNotes = Array.isArray(noteRows) ? noteRows : [];
-    myPageState.myQuizzes = Array.isArray(myQuizData?.data?.quizzes) ? myQuizData.data.quizzes : [];
+    myPageState.myNotes = myPageState.mySelectedDate && Array.isArray(noteRows) ? noteRows : [];
+    myPageState.myQuizzes = myPageState.mySelectedDate && Array.isArray(myQuizData?.data?.quizzes) ? myQuizData.data.quizzes : [];
 
     renderCalendar({
       containerId: "myCalendar",
@@ -515,16 +529,22 @@ async function loadMyNotes() {
   }
 }
 
-function renderCommunityNotes() {
+function renderCommunityNotesAndQuizzes() {
   const el = $("communityList");
   if (!el) return;
   updateSelectedDateIndicator("communitySelectedDate", myPageState.communitySelectedDate);
 
-  const targetLabel = formatDateLabel(myPageState.communitySelectedDate);
-  setDaySummary("communityDayCountSummary", `${targetLabel} / ${myPageState.communityNotes.length}件`);
+  if (!myPageState.communitySelectedDate) {
+    setDaySummary("communityDayCountSummary", "日付を選択すると、その日に作成したコミュニティノートと関連クイズを表示します。");
+    el.innerHTML = `<div class="small">日付を選択してください。選択後にコミュニティノートと関連クイズを表示します。</div>`;
+    return;
+  }
 
-  if (!myPageState.communityNotes.length) {
-    el.innerHTML = `<div class="small">条件に合うコミュニティノートはありません。</div>`;
+  const targetLabel = formatDateLabel(myPageState.communitySelectedDate);
+  setDaySummary("communityDayCountSummary", `${targetLabel} / ノート ${myPageState.communityNotes.length}件・クイズ ${myPageState.communityQuizzes.length}件`);
+
+  if (!myPageState.communityNotes.length && !myPageState.communityQuizzes.length) {
+    el.innerHTML = `<div class="small">この日に作成したノート・クイズはありません。</div>`;
     return;
   }
 
@@ -536,7 +556,7 @@ function renderCommunityNotes() {
     rowsByCommunity.set(key, items);
   }
 
-  el.innerHTML = Array.from(rowsByCommunity.entries()).map(([communityLabel, notes]) => {
+  const noteSections = Array.from(rowsByCommunity.entries()).map(([communityLabel, notes]) => {
     const cards = notes.map((n) => {
       const author = n.author_name ? ` / 投稿：${escapeHtml(n.author_name)}` : "";
       return `
@@ -561,6 +581,36 @@ function renderCommunityNotes() {
     `;
   }).join("");
 
+  const quizSections = myPageState.communityQuizzes.map((q) => {
+    const communityLabel = q.community_name ? ` / 🏷 ${escapeHtml(q.community_name)}` : "";
+    return `
+      <div class="card">
+        <div style="display:flex; gap:10px; align-items:baseline; flex-wrap:wrap;">
+          <strong>[クイズ] ${escapeHtml(q.title || `ノートクイズ #${q.id}`)}</strong>
+          <span style="font-size:12px; color:#666;">${quizTypeLabel(q.quiz_type)}</span>
+        </div>
+        <div>${escapeHtml(q.question_text || "問題文なし")}${communityLabel}</div>
+        <div class="small">作成日時: ${new Date(q.created_at).toLocaleString("ja-JP")}</div>
+        <div class="row" style="margin-top:8px;">
+          <a class="button-link" href="/my-quizzes.html">クイズ一覧で確認</a>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  el.innerHTML = `
+    <div class="content-split">
+      <section>
+        <h3>ノート</h3>
+        ${noteSections || `<div class="small">この日に作成したコミュニティノートはありません。</div>`}
+      </section>
+      <section>
+        <h3>クイズ</h3>
+        ${quizSections || `<div class="small">この日に作成した関連クイズはありません。</div>`}
+      </section>
+    </div>
+  `;
+
   el.querySelectorAll("[data-community-open]").forEach((btn) => {
     btn.addEventListener("click", () => {
       location.href = "/note_detail.html?id=" + btn.dataset.communityOpen + "&from=" + encodeURIComponent("/mypage.html");
@@ -576,21 +626,38 @@ async function loadCommunityNotes() {
   if (el) el.textContent = "読み込み中…";
 
   try {
-    const [summaryData, rows] = await Promise.all([
+    const requests = [
       api(buildUrl("/api/community-notes/calendar-summary", { month: myPageState.communityCurrentMonth })),
-      api(buildUrl("/api/community-notes", {
-        date: myPageState.communitySelectedDate,
-        search: myPageState.communitySearch,
-        sort: myPageState.communitySort,
-      })),
-    ]);
+      api(buildUrl("/api/community-quizzes/calendar-summary", { month: myPageState.communityCurrentMonth })),
+    ];
+
+    if (myPageState.communitySelectedDate) {
+      requests.push(
+        api(buildUrl("/api/community-notes", {
+          date: myPageState.communitySelectedDate,
+          search: myPageState.communitySearch,
+          sort: myPageState.communitySort,
+        })),
+        api(buildUrl("/api/community-quizzes", {
+          date: myPageState.communitySelectedDate,
+          search: myPageState.communitySearch,
+          sort: myPageState.communitySort,
+        }))
+      );
+    }
+
+    const [noteSummaryData, quizSummaryData, rows, communityQuizData] = await Promise.all(requests);
 
     const summaryMap = new Map();
-    (summaryData?.days || []).forEach((d) => {
-      summaryMap.set(d.date, { noteCount: Number(d.count || 0) });
+    (noteSummaryData?.days || []).forEach((d) => {
+      summaryMap.set(d.date, { ...(summaryMap.get(d.date) || {}), noteCount: Number(d.count || 0) });
+    });
+    (quizSummaryData?.days || []).forEach((d) => {
+      summaryMap.set(d.date, { ...(summaryMap.get(d.date) || {}), quizCount: Number(d.count || 0) });
     });
     myPageState.communitySummary = summaryMap;
-    myPageState.communityNotes = Array.isArray(rows) ? rows : [];
+    myPageState.communityNotes = myPageState.communitySelectedDate && Array.isArray(rows) ? rows : [];
+    myPageState.communityQuizzes = myPageState.communitySelectedDate && Array.isArray(communityQuizData) ? communityQuizData : [];
 
     renderCalendar({
       containerId: "communityCalendar",
@@ -603,7 +670,7 @@ async function loadCommunityNotes() {
         loadCommunityNotes();
       },
     });
-    renderCommunityNotes();
+    renderCommunityNotesAndQuizzes();
   } catch (e) {
     if (el) el.innerHTML = `取得失敗: ${escapeHtml(e.message)}`;
   } finally {
