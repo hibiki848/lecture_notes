@@ -66,7 +66,7 @@ function formatErrorMessage(err) {
   if (err.status === 401) return "ログインが必要です。ログイン後にお試しください。";
   if (err.status === 402) return "有料プラン契約が必要です。Proプランに登録してください。";
   if (err.status === 403) return "Pro限定または権限不足のため実行できません。";
-  if (err.status === 429) return "今月の利用上限に達しました。来月まで待つかプランをご確認ください。";
+  if (err.status === 429) return err.message || "今月の利用上限に達しました。翌月にリセットされます。";
 
   return err.message || "API呼び出しに失敗しました";
 }
@@ -751,11 +751,11 @@ function buildBillingCards(data = {}) {
       value: formatUsageLimit(usage.ai_summary, features.ai_summary_monthly_limit),
     },
     {
-      label: "クイズ生成（月）",
+      label: "AIクイズ生成（月）",
       value: formatUsageLimit(usage.quiz_generation, features.quiz_generation_monthly_limit),
     },
     {
-      label: "クイズ手動作成（月）",
+      label: "クイズ手動作成",
       value: formatUsageLimit(usage.quiz_creation, features.quiz_creation_monthly_limit),
     },
     {
