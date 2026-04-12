@@ -20,9 +20,13 @@ function parseAndValidateQuizResponse(raw) {
   const quizzes = Array.isArray(parsed?.quizzes) ? parsed.quizzes : [];
   return quizzes.map((q) => ({
     topic: String(q.topic || "").trim(),
+    quiz_type: String(q.quiz_type || q.type || "").trim(),
     question: String(q.question || "").trim(),
-    choices: Array.isArray(q.choices) ? q.choices.map((c) => String(c || "").trim()) : [],
-    answerIndex: Number(q.answerIndex),
+    correct_answer: String(q.correct_answer || q.answer || "").trim(),
+    choice_1: String(q.choice_1 || "").trim(),
+    choice_2: String(q.choice_2 || "").trim(),
+    choice_3: String(q.choice_3 || "").trim(),
+    choice_4: String(q.choice_4 || "").trim(),
     reason: String(q.reason || "").trim(),
     sourceQuote: String(q.sourceQuote || "").trim(),
   }));
@@ -40,20 +44,49 @@ function filterLowQualityQuizzes(quizzes, noteText) {
       reasons.push({ question: q.question, reason: "question_too_short" });
       continue;
     }
-    if (q.choices.length !== 4 || q.choices.some((c) => !c)) {
-      reasons.push({ question: q.question, reason: "invalid_choices" });
-      continue;
-    }
-    if (!Number.isInteger(q.answerIndex) || q.answerIndex < 0 || q.answerIndex > 3) {
-      reasons.push({ question: q.question, reason: "invalid_answer_index" });
+
+    if (!["multiple_choice", "written", "true_false", "fill_blank"].includes(q.quiz_type)) {
+      reasons.push({ question: q.question, reason: "invalid_quiz_type" });
       continue;
     }
 
-    const normalizedChoices = q.choices.map(normalizeText);
-    if (new Set(normalizedChoices).size !== 4) {
-      reasons.push({ question: q.question, reason: "duplicate_choices" });
+    if (!q.correct_answer) {
+      reasons.push({ question: q.question, reason: "missing_correct_answer" });
       continue;
     }
+
+    if (q.quiz_type === "multiple_choice") {
+      const choices = [q.choice_1, q.choice_2, q.choice_3, q.choice_4].map((c) => String(c || "").trim());
+      if (choices.some((c) => !c)) {
+        reasons.push({ question: q.question, reason: "invalid_choices" });
+        continue;
+      }
+      if (new Set(choices.map(normalizeText)).size !== 4) {
+        reasons.push({ question: q.question, reason: "duplicate_choices" });
+        continue;
+      }
+      if (!choices.includes(q.correct_answer)) {
+        reasons.push({ question: q.question, reason: "correct_not_in_choices" });
+        continue;
+      }
+    }
+
+    if (q.quiz_type === "true_false" && !["○", "×"].includes(q.correct_answer)) {
+      reasons.push({ question: q.question, reason: "invalid_true_false_answer" });
+      continue;
+    }
+
+    if (q.quiz_type === "fill_blank") {
+      const hasBlankMarker =
+        /_{3,}/.test(q.question) ||
+        /（[　\s]+）/.test(q.question) ||
+        /\([　\s]+\)/.test(q.question);
+      if (!hasBlankMarker) {
+        reasons.push({ question: q.question, reason: "fill_blank_without_blank_marker" });
+        continue;
+      }
+    }
+
     if (seen.has(qKey)) {
       reasons.push({ question: q.question, reason: "duplicate_question" });
       continue;

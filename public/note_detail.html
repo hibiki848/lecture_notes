@@ -35,6 +35,14 @@
     <h2>クイズ（本文から自動生成）</h2>
 
     <div class="row2" style="margin: 8px 0;">
+      <label class="small" for="quizTypeSelect">形式</label>
+      <select id="quizTypeSelect">
+        <option value="auto">おまかせ</option>
+        <option value="multiple_choice">4択</option>
+        <option value="written">一問一答</option>
+        <option value="true_false">○×</option>
+        <option value="fill_blank">少数（穴埋め）</option>
+      </select>
       <button id="btnGenQuiz" type="button">AIでクイズ生成</button>
       <button id="btnReloadQuiz" type="button">更新</button>
       <span class="small">※ノートが公開ならクイズも同じ範囲で公開</span>
@@ -155,10 +163,11 @@
 
       document.getElementById("btnGenQuiz").addEventListener("click", async () => {
         try {
+          const quizType = document.getElementById("quizTypeSelect")?.value || "auto";
           await api(`/api/notes/${id}/quizzes/generate`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ mode: "replace", engine: "ai" })
+            body: JSON.stringify({ mode: "replace", engine: "ai", quiz_type: quizType })
           });
           await loadQuizzes(id);
           alert("クイズを生成しました！");

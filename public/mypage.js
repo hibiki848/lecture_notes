@@ -185,12 +185,15 @@ function updateActionMessage(targetEl, type, message, html = false) {
   else targetEl.textContent = message;
 }
 
-async function handleGenerateQuiz(noteId, messageEl, triggerBtn) {
+async function handleGenerateQuiz(noteId, quizType, messageEl, triggerBtn) {
   setButtonLoading(triggerBtn, true, "生成中…");
   updateActionMessage(messageEl, "info", "クイズを生成しています…");
 
   try {
-    const result = await api(`/api/notes/${noteId}/generate-quiz`, { method: "POST" });
+    const result = await api(`/api/notes/${noteId}/generate-quiz`, {
+      method: "POST",
+      body: JSON.stringify({ quiz_type: quizType || "auto" }),
+    });
     let message = `クイズを ${Number(result.generatedCount || 0)} 件生成しました。`;
 
     try {
@@ -293,6 +296,13 @@ function renderMyNotesAndQuizzes() {
           <button class="btnOpen" data-note-open="${n.id}">開く</button>
           <button class="btnToggle" data-note-toggle="${n.id}">${toggleButtonText(n.visibility)}</button>
           <button class="btnDelete" data-note-delete="${n.id}">削除</button>
+          <select data-note-generate-type="${n.id}" aria-label="自動生成クイズ形式">
+            <option value="auto">おまかせ</option>
+            <option value="multiple_choice">4択</option>
+            <option value="written">一問一答</option>
+            <option value="true_false">○×</option>
+            <option value="fill_blank">少数（穴埋め）</option>
+          </select>
           <button class="btnGenerateQuiz" data-note-generate="${n.id}">クイズ生成</button>
           <button class="btnAiSummary" data-note-summary="${n.id}">AI要約</button>
           <button class="btnExportPdf" data-note-pdf="${n.id}">PDF出力</button>
@@ -359,7 +369,9 @@ function renderMyNotesAndQuizzes() {
     btn.addEventListener("click", () => {
       const noteCard = btn.closest(".card");
       const msgEl = noteCard?.querySelector(".note-action-message");
-      handleGenerateQuiz(Number(btn.dataset.noteGenerate), msgEl, btn);
+      const typeSelect = noteCard?.querySelector(`[data-note-generate-type="${btn.dataset.noteGenerate}"]`);
+      const quizType = typeSelect?.value || "auto";
+      handleGenerateQuiz(Number(btn.dataset.noteGenerate), quizType, msgEl, btn);
     });
   });
   listEl.querySelectorAll("[data-note-summary]").forEach((btn) => {

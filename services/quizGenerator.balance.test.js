@@ -16,8 +16,12 @@ function createSeededRandom(seed) {
 function makeQuizzes(count) {
   return Array.from({ length: count }, (_, i) => ({
     question: `Q${i + 1}`,
-    choices: [`correct-${i + 1}`, `wrong-a-${i + 1}`, `wrong-b-${i + 1}`, `wrong-c-${i + 1}`],
-    answerIndex: 0,
+    quiz_type: "multiple_choice",
+    correct_answer: `correct-${i + 1}`,
+    choice_1: `correct-${i + 1}`,
+    choice_2: `wrong-a-${i + 1}`,
+    choice_3: `wrong-b-${i + 1}`,
+    choice_4: `wrong-c-${i + 1}`,
   }));
 }
 
@@ -40,7 +44,9 @@ function makeQuizzes(count) {
   const balanced = rebalanceQuizAnswerPositions(quizzes, createSeededRandom(3));
 
   balanced.forEach((quiz, i) => {
-    assert.strictEqual(quiz.choices[quiz.answerIndex], `correct-${i + 1}`);
+    const choices = [quiz.choice_1, quiz.choice_2, quiz.choice_3, quiz.choice_4];
+    assert(choices.includes(`correct-${i + 1}`));
+    assert.strictEqual(quiz.correct_answer, `correct-${i + 1}`);
   });
 
   const distribution = summarizeAnswerPositionDistribution(balanced);
