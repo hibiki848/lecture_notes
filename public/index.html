@@ -103,6 +103,13 @@ TODO: 次回までにレポートテーマ決める
         <input type="checkbox" id="auto_quiz" checked />
         保存後にクイズを自動生成（おすすめ）
       </label>
+      <select id="auto_quiz_type" aria-label="自動生成クイズ形式">
+        <option value="auto">おまかせ</option>
+        <option value="multiple_choice">4択</option>
+        <option value="written">一問一答</option>
+        <option value="true_false">○×</option>
+        <option value="fill_blank">少数（穴埋め）</option>
+      </select>
     </div>
 
     <div id="save_announce" class="small hint" role="status" aria-live="polite"></div>

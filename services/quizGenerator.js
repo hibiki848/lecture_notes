@@ -21,8 +21,12 @@ function buildBalancedAnswerIndices(count, random = Math.random) {
 }
 
 function alignQuizAnswerIndex(quiz, targetAnswerIndex, random = Math.random) {
-  const correctChoice = quiz.choices[quiz.answerIndex];
-  const wrongChoices = quiz.choices.filter((_, index) => index !== quiz.answerIndex);
+  const choices = [quiz.choice_1, quiz.choice_2, quiz.choice_3, quiz.choice_4];
+  const answerIndex = choices.findIndex((choice) => choice === quiz.correct_answer);
+  if (answerIndex < 0) return quiz;
+
+  const correctChoice = choices[answerIndex];
+  const wrongChoices = choices.filter((_, index) => index !== answerIndex);
   shuffleInPlace(wrongChoices, random);
 
   const alignedChoices = new Array(4);
@@ -36,8 +40,11 @@ function alignQuizAnswerIndex(quiz, targetAnswerIndex, random = Math.random) {
 
   return {
     ...quiz,
-    choices: alignedChoices,
-    answerIndex: targetAnswerIndex,
+    choice_1: alignedChoices[0],
+    choice_2: alignedChoices[1],
+    choice_3: alignedChoices[2],
+    choice_4: alignedChoices[3],
+    correct_answer: alignedChoices[targetAnswerIndex],
   };
 }
 
@@ -49,8 +56,10 @@ function rebalanceQuizAnswerPositions(quizzes, random = Math.random) {
 function summarizeAnswerPositionDistribution(quizzes) {
   const counts = [0, 0, 0, 0];
   for (const quiz of quizzes) {
-    if (Number.isInteger(quiz.answerIndex) && quiz.answerIndex >= 0 && quiz.answerIndex < 4) {
-      counts[quiz.answerIndex] += 1;
+    const choices = [quiz.choice_1, quiz.choice_2, quiz.choice_3, quiz.choice_4];
+    const answerIndex = choices.findIndex((choice) => choice === quiz.correct_answer);
+    if (answerIndex >= 0 && answerIndex < 4) {
+      counts[answerIndex] += 1;
     }
   }
   return {
@@ -62,11 +71,14 @@ function summarizeAnswerPositionDistribution(quizzes) {
 }
 
 function formatQuizForStorage(quiz) {
-  const choicesText = quiz.choices.map((c, i) => `${i + 1}. ${c}`).join("\n");
   return {
-    type: "mcq",
-    question: `${quiz.question}\n${choicesText}`,
-    answer: quiz.choices[quiz.answerIndex],
+    type: quiz.quiz_type,
+    question: quiz.question,
+    answer: quiz.correct_answer,
+    choice_1: quiz.choice_1 || null,
+    choice_2: quiz.choice_2 || null,
+    choice_3: quiz.choice_3 || null,
+    choice_4: quiz.choice_4 || null,
     source_line: null,
   };
 }
@@ -155,6 +167,7 @@ async function generateQuizzesWithQualityPipeline({ openai, note, targetCount = 
     points,
     difficulty: "normal",
     targetCount,
+    requestedQuizType: note?.requested_quiz_type || "auto",
   });
   logger.info("quiz_pipeline:generated", { count: accepted.length + reasons.length });
   logger.info("quiz_pipeline:validated", {
@@ -170,10 +183,18 @@ async function generateQuizzesWithQualityPipeline({ openai, note, targetCount = 
   }
 
   const selectedQuizzes = accepted.slice(0, targetCount);
-  const balancedQuizzes = rebalanceQuizAnswerPositions(selectedQuizzes);
+  const mcqQuizzes = selectedQuizzes.filter((quiz) => quiz.quiz_type === "multiple_choice");
+  const balancedMcqQuizzes = rebalanceQuizAnswerPositions(mcqQuizzes);
+  let mcqIndex = 0;
+  const balancedQuizzes = selectedQuizzes.map((quiz) => {
+    if (quiz.quiz_type !== "multiple_choice") return quiz;
+    const replaced = balancedMcqQuizzes[mcqIndex];
+    mcqIndex += 1;
+    return replaced || quiz;
+  });
   logger.info("quiz_pipeline:answer_position_distribution", {
-    count: balancedQuizzes.length,
-    distribution: summarizeAnswerPositionDistribution(balancedQuizzes),
+    count: mcqQuizzes.length,
+    distribution: summarizeAnswerPositionDistribution(balancedMcqQuizzes),
   });
 
   return balancedQuizzes.map(formatQuizForStorage);

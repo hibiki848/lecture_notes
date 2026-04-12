@@ -554,7 +554,10 @@ async function generateQuizzesForNote(note, options = {}) {
   const openai = getOpenAIClient();
   return generateQuizzesWithQualityPipeline({
     openai,
-    note,
+    note: {
+      ...note,
+      requested_quiz_type: options.quizType || "auto",
+    },
     targetCount: options.limit || 10,
     logger: console,
   });
@@ -2422,9 +2425,16 @@ const handleGenerateQuiz = [
       });
     }
 
+    const requestedQuizType = String(req.body?.quiz_type || req.body?.quizType || "auto").trim() || "auto";
+    if (!["auto", "multiple_choice", "written", "true_false", "fill_blank"].includes(requestedQuizType)) {
+      return res.status(400).json({
+        message: "quiz_type は auto / multiple_choice / written / true_false / fill_blank のいずれかを指定してください。",
+      });
+    }
+
     let quizzes = [];
     try {
-      quizzes = await generateQuizzesForNote(note, { limit: 10 });
+      quizzes = await generateQuizzesForNote(note, { limit: 10, quizType: requestedQuizType });
     } catch (err) {
       console.error("quiz_pipeline_failed", {
         noteId,
@@ -2440,9 +2450,9 @@ const handleGenerateQuiz = [
 
     for (const q of quizzes) {
       await pool.query(
-        `INSERT INTO note_quizzes (user_id, note_id, type, question, answer, source_line)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [userId, noteId, q.type, q.question, q.answer, q.source_line]
+        `INSERT INTO note_quizzes (user_id, note_id, type, question, answer, choice_1, choice_2, choice_3, choice_4, source_line)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, noteId, q.type, q.question, q.answer, q.choice_1, q.choice_2, q.choice_3, q.choice_4, q.source_line]
       );
     }
 
@@ -2451,6 +2461,7 @@ const handleGenerateQuiz = [
     res.json({
       ok: true,
       generatedCount: quizzes.length,
+      quiz_type: requestedQuizType,
       quizzes,
       usage: {
         featureCode: "quiz_generation",

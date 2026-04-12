@@ -225,9 +225,10 @@ async function tryGenerateQuiz(noteId) {
   if (!auto || !auto.checked) return { skipped: true };
 
   try {
+    const quizType = $("auto_quiz_type")?.value || "auto";
     const r = await api(`/api/notes/${noteId}/quizzes/generate`, {
       method: "POST",
-      body: JSON.stringify({ mode: "replace" }),
+      body: JSON.stringify({ mode: "replace", quiz_type: quizType }),
     });
     return { ok: true, inserted: r.inserted ?? null };
   } catch (e) {
