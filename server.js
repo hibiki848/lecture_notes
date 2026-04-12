@@ -604,7 +604,7 @@ async function ensureNoteSaveAvailable(userId) {
       ...plan,
       currentCount,
       maxNotes,
-      message: "無料プランではノート保存は30件までです。有料プランで無制限になります。",
+      message: "ノート保存上限に達しました。",
     };
   }
   return { ok: true, ...plan, currentCount, maxNotes };
@@ -1135,7 +1135,7 @@ app.post("/api/notes/preview", wrap(async (req, res) => {
   res.json({ body_md });
 }));
 
-app.post("/api/notes/extract-text", requireLogin, requireUsageLimit("ocr_extraction", "ocr_extraction_monthly_limit"), wrap(async (req, res) => {
+app.post("/api/notes/extract-text", requireLogin, wrap(async (req, res) => {
   const { image_base64, mime_type, file_name, file_size } = req.body || {};
   const mimeType = String(mime_type || "").toLowerCase();
   const fileName = String(file_name || "");
@@ -1168,16 +1168,9 @@ app.post("/api/notes/extract-text", requireLogin, requireUsageLimit("ocr_extract
     });
   }
 
-  await incrementUsageCount(req.session.userId, "ocr_extraction", 1);
-
   res.json({
     text: extractedText,
     source_type: "image",
-    usage: {
-      featureCode: "ocr_extraction",
-      usedAfter: (req.usageLimit?.used || 0) + 1,
-      limit: req.usageLimit?.limit,
-    },
   });
 }));
 
@@ -2126,23 +2119,23 @@ const ACTIVE_SUBSCRIPTION_STATUSES = new Set(["active", "trialing"]);
 
 const PLAN_FEATURES = {
   free: {
-    max_notes: 30,
-    ai_summary_monthly_limit: 20,
-    quiz_generation_monthly_limit: 10,
-    quiz_creation_monthly_limit: 10,
-    quiz_distractor_generation_monthly_limit: 20,
-    ocr_extraction_monthly_limit: 20,
-    max_custom_quizzes: 30,
+    max_notes: -1,
+    ai_summary_monthly_limit: 200,
+    quiz_generation_monthly_limit: 200,
+    quiz_creation_monthly_limit: -1,
+    quiz_distractor_generation_monthly_limit: 200,
+    ocr_extraction_monthly_limit: -1,
+    max_custom_quizzes: -1,
     can_export_pdf: false,
   },
   pro: {
     max_notes: -1,
-    ai_summary_monthly_limit: 500,
-    quiz_generation_monthly_limit: 300,
+    ai_summary_monthly_limit: 200,
+    quiz_generation_monthly_limit: 200,
     quiz_creation_monthly_limit: -1,
-    quiz_distractor_generation_monthly_limit: -1,
+    quiz_distractor_generation_monthly_limit: 200,
     ocr_extraction_monthly_limit: -1,
-    max_custom_quizzes: 1000,
+    max_custom_quizzes: -1,
     can_export_pdf: true,
   },
 };
@@ -2484,9 +2477,7 @@ app.get("/api/billing/me", requireLogin, wrap(async (req, res) => {
   const usage = {
     ai_summary: await getUsageCount(req.session.userId, "ai_summary"),
     quiz_generation: await getUsageCount(req.session.userId, "quiz_generation"),
-    quiz_creation: await getUsageCount(req.session.userId, "quiz_creation"),
     quiz_distractor_generation: await getUsageCount(req.session.userId, "quiz_distractor_generation"),
-    ocr_extraction: await getUsageCount(req.session.userId, "ocr_extraction"),
   };
 
   res.json({
@@ -2541,7 +2532,7 @@ app.post("/api/notes/:id/export-pdf", requireLogin, requirePro, wrap(async (req,
 app.post(
   "/api/notes/:id/ai-summary",
   requireLogin,
-  requireUsageLimit("ai_summary", "ai_summary_monthly_limit"),
+  requireUsageLimit("ai_summary", "ai_summary_monthly_limit", "AI要約の月間利用上限（200回）に達しました。翌月にリセットされます。"),
   wrap(async (req, res) => {
     const noteId = Number(req.params.id);
     const note = await getNoteById(noteId);
@@ -2566,7 +2557,7 @@ app.post(
 
 const handleGenerateQuiz = [
   requireLogin,
-  requireUsageLimit("quiz_generation", "quiz_generation_monthly_limit"),
+  requireUsageLimit("quiz_generation", "quiz_generation_monthly_limit", "AIクイズ生成の月間利用上限（200回）に達しました。翌月にリセットされます。"),
   wrap(async (req, res) => {
     const noteId = Number(req.params.id);
     const userId = req.session?.userId || req.session?.user?.id || req.user?.id;
@@ -2698,7 +2689,6 @@ const [result] = await pool.query(
 app.post(
   "/api/quizzes",
   requireLogin,
-  requireUsageLimit("quiz_creation", "quiz_creation_monthly_limit", "無料プランではクイズ作成は月10回までです。有料プランで無制限になります。"),
   wrap(async (req, res) => {
     const userId = req.session.userId;
     const { normalized, errors } = validateUserQuizPayload(req.body || {});
@@ -2738,16 +2728,9 @@ app.post(
       throw error;
     }
 
-    await incrementUsageCount(userId, "quiz_creation", 1);
-
     res.status(201).json({
       ok: true,
       id: result.insertId,
-      usage: {
-        featureCode: "quiz_creation",
-        usedAfter: (req.usageLimit?.used || 0) + 1,
-        limit: req.usageLimit?.limit,
-      },
     });
   })
 );
@@ -2927,7 +2910,7 @@ app.delete("/api/quizzes/:id", requireLogin, wrap(async (req, res) => {
 app.post(
   "/api/quizzes/generate-distractors",
   requireLogin,
-  requireUsageLimit("quiz_distractor_generation", "quiz_distractor_generation_monthly_limit"),
+  requireUsageLimit("quiz_distractor_generation", "quiz_distractor_generation_monthly_limit", "四択問題の不正解回答AI生成の月間利用上限（200回）に達しました。翌月にリセットされます。"),
   wrap(async (req, res) => {
     const questionText = String(req.body?.questionText || "").trim();
     const correctAnswer = String(req.body?.correctAnswer || "").trim();
